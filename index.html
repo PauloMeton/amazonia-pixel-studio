@@ -160,6 +160,7 @@
   </div>
 
   <div class="frames" id="frames">
+    <span id="clipBar" class="row" style="gap:4px"></span>
     <button onclick="Frames.add()" title="Novo quadro">+ Quadro</button>
     <button onclick="Frames.dup()">Duplicar</button>
     <button onclick="PX.toggleOnion()" id="onionBtn">Onion: off</button>
@@ -176,7 +177,7 @@
 const DEFAULT_FB_CONFIG = { apiKey:"AIzaSyALwzr4Ur2X0ptWIjQJq57kVf62vCa0FIY", authDomain:"ia-asset-studio.firebaseapp.com", projectId:"ia-asset-studio", storageBucket:"ia-asset-studio.firebasestorage.app", messagingSenderId:"303237200701", appId:"1:303237200701:web:97006f81f69b438f492354" };
 const DEFAULT_PALETTE=['#000000','#1a1a1a','#3d3d3d','#ffffff','#7f0622','#d62828','#f77f00','#fcbf49','#1b4332','#2d6a4f','#52b788','#95d5b2','#023e8a','#0077b6','#48cae4','#caf0f8','#3a0ca3','#7209b7','#b5179e','#f72585','#5c3a1a','#7a4d26','#a0703c','#deb887','#7FFFD4','#D4AF37','#8fb89c','#ff6b6b'];
 let S = blank();
-function blank(){ return { name:'pixel-art', w:32, h:32, frames:[ new Array(32*32).fill('') ], cur:0, color:'#1b9e4b', tool:'pencil', zoom:14, grid:true, onion:false, sym:'none' }; }
+function blank(){ return { name:'pixel-art', w:32, h:32, frames:[ new Array(32*32).fill('') ], cur:0, color:'#1b9e4b', tool:'pencil', zoom:14, grid:true, onion:false, sym:'none', clips:null, clip:'idle' }; }
 function frame(){ return S.frames[S.cur]; }
 
 /* ============ PX (render + draw) ============ */
@@ -240,8 +241,8 @@ const PX = {
   toggleGrid(){ S.grid=!S.grid; document.getElementById('gridBtn').classList.toggle('on',S.grid); this.render(); },
   toggleOnion(){ S.onion=!S.onion; document.getElementById('onionBtn').textContent='Onion: '+(S.onion?'on':'off'); document.getElementById('onionBtn').classList.toggle('on',S.onion); this.render(); },
   snapshot(){ this.hist=this.hist.slice(0,this.hi+1); this.hist.push(JSON.stringify(S.frames)); if(this.hist.length>60)this.hist.shift(); this.hi=this.hist.length-1; },
-  undo(){ if(this.hi<=0) return; this.hi--; S.frames=JSON.parse(this.hist[this.hi]); if(S.cur>=S.frames.length)S.cur=S.frames.length-1; this.render(); Frames.thumbs(); App.touch(); },
-  redo(){ if(this.hi>=this.hist.length-1) return; this.hi++; S.frames=JSON.parse(this.hist[this.hi]); this.render(); Frames.thumbs(); App.touch(); }
+  undo(){ if(this.hi<=0) return; this.hi--; S.frames=JSON.parse(this.hist[this.hi]); if(S.clips&&S.clip)S.clips[S.clip]=S.frames; if(S.cur>=S.frames.length)S.cur=S.frames.length-1; this.render(); Frames.thumbs(); App.touch(); },
+  redo(){ if(this.hi>=this.hist.length-1) return; this.hi++; S.frames=JSON.parse(this.hist[this.hi]); if(S.clips&&S.clip)S.clips[S.clip]=S.frames; this.render(); Frames.thumbs(); App.touch(); }
 };
 
 /* ============ Tools / Palette ============ */
@@ -330,7 +331,7 @@ const AI2={
       const nb=[[1,0],[-1,0],[0,1],[0,-1]].some(d=>{ const nx=x+d[0],ny=y+d[1]; return nx>=0&&ny>=0&&nx<w&&ny<h&&f[ny*w+nx]; });
       if(nb) out[i]='#1a1a1a'; }
     return out; },
-  sprite(){ S.frames[S.cur]=this.genFrame(randPal(),randPal()); PX.render(); PX.snapshot(); Frames.thumbs(); App.touch(); g('aiMsg').textContent='Sprite aleatória gerada.'; },
+  sprite(){ S.frames[S.cur]=this.genFrame(randPal(),randPal()); genClips(); g('aiMsg').textContent='Sprite aleatória gerada com idle, andar e 4 ataques.'; },
   anim(){ const base=(S.frames[S.cur]||[]).slice(); if(!base.some(x=>x)){ g('aiMsg').textContent='Importe/desenhe uma sprite primeiro (este quadro está vazio).'; return; }
     const dys=[0,1,1,0], frames=[];
     for(let k=0;k<dys.length;k++){ const dy=dys[k]; const fr=new Array(S.w*S.h).fill('');
@@ -343,7 +344,7 @@ const AI2={
     img.onload=()=>{ try{ const oc=document.createElement('canvas'); oc.width=S.w; oc.height=S.h; const ox=oc.getContext('2d'); ox.drawImage(img,0,0,S.w,S.h);
       const d=ox.getImageData(0,0,S.w,S.h).data; const fr=new Array(S.w*S.h).fill('');
       for(let i=0;i<S.w*S.h;i++){ const r=d[i*4],gg=d[i*4+1],b=d[i*4+2]; if(!(r>238&&gg>238&&b>238)) fr[i]=rgbHex(r,gg,b); }
-      S.frames[S.cur]=fr; PX.render(); PX.snapshot(); Frames.thumbs(); App.touch(); g('aiMsg').textContent='Sprite gerada pela IA!';
+      S.frames[S.cur]=fr; genClips(); g('aiMsg').textContent='Sprite gerada pela IA — com idle, andar e ataques!';
     }catch(e){ g('aiMsg').textContent='A imagem veio sem permissão p/ ler pixels (CORS). Tente "Aleatório".'; } };
     img.onerror=()=>{ g('aiMsg').textContent='Falha ao gerar (sem internet ou serviço fora). Use Aleatório/Animação.'; };
     img.src=url; },
@@ -357,7 +358,7 @@ const AI2={
       for(let i=0;i<S.w*S.h;i++){ if(d[i*4+3]<40) continue; op.push([d[i*4],d[i*4+1],d[i*4+2]]); ix.push(i); }
       if(snap){ for(let k=0;k<ix.length;k++){ fr[ix[k]]=nearestPal(op[k][0],op[k][1],op[k][2]); } }
       else { const pal=medianCut(op,ncol); for(let k=0;k<ix.length;k++){ const c=nearestRgb(pal,op[k][0],op[k][1],op[k][2]); fr[ix[k]]=rgbHex(c[0],c[1],c[2]); } }
-      S.frames[S.cur]=fr; PX.render(); PX.snapshot(); Frames.thumbs(); App.touch(); g('aiMsg').textContent='Imagem convertida em pixel art!';
+      S.frames[S.cur]=fr; genClips(); g('aiMsg').textContent='Imagem convertida e animada (idle, andar, 4 ataques)!';
     }catch(e){ g('aiMsg').textContent='Erro ao converter: '+e.message; } URL.revokeObjectURL(url); };
     img.onerror=()=>{ g('aiMsg').textContent='Não consegui ler essa imagem.'; URL.revokeObjectURL(url); };
     img.src=url; ev.target.value=''; }
@@ -372,13 +373,23 @@ const App={ t:null,
   saveJSON(){ dl('data:application/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(serialize(),null,2)), App.safe()+'.json'); },
   openJSON(ev){ const f=ev.target.files[0]; if(!f)return; const r=new FileReader(); r.onload=()=>{ try{ deserialize(JSON.parse(r.result)); }catch(e){ alert('JSON inválido'); } }; r.readAsText(f); ev.target.value=''; },
   drawer(){ const p=document.querySelector('.side.right'), b=document.getElementById('backdrop'), c=document.getElementById('drawerClose'); const open=!p.classList.contains('open'); p.classList.toggle('open',open); b.classList.toggle('show',open); if(c) c.style.display=open?'block':'none'; } };
-function serialize(){ S.name=g('projName').value; return {v:1,name:S.name,w:S.w,h:S.h,frames:S.frames}; }
-function deserialize(o){ S=blank(); S.name=o.name||'pixel-art'; S.w=o.w||32; S.h=o.h||32; S.frames=(o.frames&&o.frames.length)?o.frames:[new Array(S.w*S.h).fill('')]; S.cur=0; g('projName').value=S.name; boot2(); }
+function transform(base, dx, dy, flip){ const fr=new Array(S.w*S.h).fill('');
+  for(let i=0;i<base.length;i++){ if(!base[i]) continue; let x=i%S.w, y=Math.floor(i/S.w); if(flip) x=S.w-1-x; x+=dx; y+=dy; if(x>=0&&y>=0&&x<S.w&&y<S.h) fr[y*S.w+x]=base[i]; } return fr; }
+const CLIPDEFS={ 'idle':[[0,0],[0,1],[0,1],[0,0]], 'andar-baixo':[[0,0],[-1,1],[0,0],[1,1]], 'andar-cima':[[0,0],[1,1],[0,0],[-1,1]], 'andar-dir':[[0,0],[1,0],[2,1],[1,0]], 'andar-esq':[[0,0,1],[-1,0,1],[-2,1,1],[-1,0,1]], 'ataque-1':[[0,0],[2,0],[4,0],[1,0]], 'ataque-2':[[0,0],[-2,0],[5,-1],[1,0]], 'ataque-3':[[0,0],[0,-3],[0,3],[0,1]], 'ataque-4':[[0,0,1],[0,0,0],[0,0,1],[0,0,0]] };
+function genClips(){ const base=(S.frames[S.cur]||[]).slice(); if(!base.some(x=>x)){ const m=g('aiMsg'); if(m)m.textContent='Gere/importe uma sprite primeiro.'; return; }
+  S.clips={}; for(const name in CLIPDEFS){ S.clips[name]=CLIPDEFS[name].map(d=>transform(base,d[0],d[1],d[2]||0)); }
+  S.clip='idle'; S.frames=S.clips['idle']; S.cur=0; buildClipBar(); PX.render(); PX.snapshot(); Frames.thumbs(); App.touch(); }
+function buildClipBar(){ const bar=g('clipBar'); if(!bar) return; bar.innerHTML=''; if(!S.clips) return;
+  Object.keys(S.clips).forEach(name=>{ const b=document.createElement('button'); b.textContent=name; if(name===S.clip)b.className='on'; b.style.padding='5px 8px'; b.onclick=()=>switchClip(name); bar.appendChild(b); });
+  const sep=document.createElement('span'); sep.style.cssText='width:1px;height:26px;background:var(--line);margin:0 4px'; bar.appendChild(sep); }
+function switchClip(name){ if(!S.clips||!S.clips[name]) return; S.clip=name; S.frames=S.clips[name]; S.cur=0; buildClipBar(); PX.render(); Frames.thumbs(); }
+function serialize(){ S.name=g('projName').value; return {v:1,name:S.name,w:S.w,h:S.h,frames:S.frames,clips:S.clips,clip:S.clip}; }
+function deserialize(o){ S=blank(); S.name=o.name||'pixel-art'; S.w=o.w||32; S.h=o.h||32; S.frames=(o.frames&&o.frames.length)?o.frames:[new Array(S.w*S.h).fill('')]; S.cur=0; if(o.clips){ S.clips=o.clips; S.clip=o.clip||Object.keys(o.clips)[0]; if(S.clips[S.clip]) S.frames=S.clips[S.clip]; } g('projName').value=S.name; boot2(); }
 
 /* ============ helpers/boot ============ */
 function g(id){ return document.getElementById(id); }
 function esc(s){ return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
-function boot2(){ PX.autoZoom(); PX.fit(); Frames.thumbs(); Palette.setColor(S.color); }
+function boot2(){ PX.autoZoom(); PX.fit(); Frames.thumbs(); Palette.setColor(S.color); buildClipBar(); }
 function boot(){
   Tools.build(); Palette.build();
   g('projName').addEventListener('input',()=>App.touch());
