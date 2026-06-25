@@ -150,6 +150,9 @@
         <input id="aiPrompt" placeholder="ex: dragão verde, espada, nave">
         <button class="primary" style="width:100%;margin-top:6px" onclick="AI2.fromText()">✨ Gerar com IA (texto)</button>
         <div class="row" style="margin-top:6px"><button style="flex:1" onclick="AI2.sprite()">🎲 Aleatório</button><button style="flex:1" onclick="AI2.anim()">▶ Animação</button></div>
+        <button style="width:100%;margin-top:6px" onclick="document.getElementById('aiImg').click()">🖼 Importar imagem → pixel</button>
+        <input type="file" id="aiImg" accept="image/*" style="display:none" onchange="AI2.fromImage(event)">
+        <label class="row" style="margin-top:4px;font-size:11px;color:var(--muted)"><input type="checkbox" id="aiSnap" style="width:auto"> &nbsp;Encaixar na paleta do editor</label>
         <p class="note" id="aiMsg" style="margin-top:6px">Texto = IA grátis online (precisa de internet). Aleatório/Animação são offline.</p>
       </div>
     </div>
@@ -307,6 +310,8 @@ const Profile={ open(){ g('profile').style.display='flex'; this.refresh(); }, cl
 /* ============ IA / GERADOR ============ */
 function rgbHex(r,g,b){ return '#'+[r,g,b].map(v=>('0'+v.toString(16)).slice(-2)).join(''); }
 function randPal(){ return DEFAULT_PALETTE[Math.floor(Math.random()*DEFAULT_PALETTE.length)]; }
+function hexRgb(h){ h=h.replace('#',''); return [parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)]; }
+function nearestPal(r,g,b){ let best=DEFAULT_PALETTE[0],bd=1e9; for(const c of DEFAULT_PALETTE){ const p=hexRgb(c); const d=(p[0]-r)*(p[0]-r)+(p[1]-g)*(p[1]-g)+(p[2]-b)*(p[2]-b); if(d<bd){bd=d;best=c;} } return best; }
 const AI2={
   genFrame(colA,colB){ const w=S.w,h=S.h,f=new Array(w*h).fill(''); const half=Math.ceil(w/2);
     const cx=(w-1)/2, cy=(h-1)/2, maxr=Math.min(w,h)/2;
@@ -332,7 +337,18 @@ const AI2={
       S.frames[S.cur]=fr; PX.render(); PX.snapshot(); Frames.thumbs(); App.touch(); g('aiMsg').textContent='Sprite gerada pela IA!';
     }catch(e){ g('aiMsg').textContent='A imagem veio sem permissão p/ ler pixels (CORS). Tente "Aleatório".'; } };
     img.onerror=()=>{ g('aiMsg').textContent='Falha ao gerar (sem internet ou serviço fora). Use Aleatório/Animação.'; };
-    img.src=url; }
+    img.src=url; },
+  fromImage(ev){ const file=ev.target.files[0]; if(!file) return; const url=URL.createObjectURL(file); const img=new Image();
+    g('aiMsg').textContent='Convertendo imagem...';
+    img.onload=()=>{ try{ const oc=document.createElement('canvas'); oc.width=S.w; oc.height=S.h; const ox=oc.getContext('2d'); ox.imageSmoothingEnabled=true; ox.clearRect(0,0,S.w,S.h);
+      const sc=Math.min(S.w/img.width, S.h/img.height), dw=Math.max(1,Math.round(img.width*sc)), dh=Math.max(1,Math.round(img.height*sc)), dx=Math.floor((S.w-dw)/2), dy=Math.floor((S.h-dh)/2);
+      ox.drawImage(img, dx,dy,dw,dh);
+      const d=ox.getImageData(0,0,S.w,S.h).data, snap=g('aiSnap').checked, fr=new Array(S.w*S.h).fill('');
+      for(let i=0;i<S.w*S.h;i++){ if(d[i*4+3]<40) continue; const r=d[i*4],gg=d[i*4+1],b=d[i*4+2]; fr[i]= snap? nearestPal(r,gg,b) : rgbHex(r,gg,b); }
+      S.frames[S.cur]=fr; PX.render(); PX.snapshot(); Frames.thumbs(); App.touch(); g('aiMsg').textContent='Imagem convertida em pixel art!';
+    }catch(e){ g('aiMsg').textContent='Erro ao converter: '+e.message; } URL.revokeObjectURL(url); };
+    img.onerror=()=>{ g('aiMsg').textContent='Não consegui ler essa imagem.'; URL.revokeObjectURL(url); };
+    img.src=url; ev.target.value=''; }
 };
 
 /* ============ APP / PERSIST ============ */
