@@ -149,7 +149,9 @@
       <div class="card"><h3>IA / Gerar</h3>
         <input id="aiPrompt" placeholder="ex: dragão verde, espada, nave">
         <button class="primary" style="width:100%;margin-top:6px" onclick="AI2.fromText()">✨ Gerar com IA (texto)</button>
-        <div class="row" style="margin-top:6px"><button style="flex:1" onclick="AI2.sprite()">🎲 Aleatório</button><button style="flex:1" onclick="AI2.anim()" title="Anima a sprite atual (balanço)">▶ Animar atual</button></div>
+        <div class="row" style="margin-top:6px"><button style="flex:1" onclick="AI2.sprite()">🎲 Aleatório</button><button style="flex:1" onclick="AI2.anim()" title="Gera idle, andar (4 direções) e 4 ataques da sprite atual">▶ Animar (idle/andar/ataques)</button></div>
+        <input id="animPrompt" placeholder="anim por texto: pular, girar, atacar forte" style="margin-top:6px">
+        <button style="width:100%;margin-top:6px" onclick="AnimText.create()">✨ Criar animação (texto)</button>
         <button style="width:100%;margin-top:6px" onclick="document.getElementById('aiImg').click()">🖼 Importar imagem → pixel</button>
         <input type="file" id="aiImg" accept="image/*" style="display:none" onchange="AI2.fromImage(event)">
         <label class="row" style="margin-top:4px;font-size:11px;color:var(--muted)"><input type="checkbox" id="aiSnap" style="width:auto"> &nbsp;Encaixar na paleta do editor</label>
@@ -165,7 +167,7 @@
     <button onclick="Frames.dup()">Duplicar</button>
     <button onclick="PX.toggleOnion()" id="onionBtn">Onion: off</button>
     <button onclick="Frames.play()" id="playBtn">▶ Play</button>
-    <span class="note">FPS</span><input type="number" id="fps" value="8" min="1" max="30" style="width:54px">
+    <span class="note">FPS</span><input type="number" id="fps" value="12" min="1" max="30" style="width:54px">
     <span style="width:1px;height:30px;background:var(--line)"></span>
     <div id="frameList" class="row"></div>
   </div>
@@ -332,11 +334,7 @@ const AI2={
       if(nb) out[i]='#1a1a1a'; }
     return out; },
   sprite(){ S.frames[S.cur]=this.genFrame(randPal(),randPal()); genClips(); g('aiMsg').textContent='Sprite aleatória gerada com idle, andar e 4 ataques.'; },
-  anim(){ const base=(S.frames[S.cur]||[]).slice(); if(!base.some(x=>x)){ g('aiMsg').textContent='Importe/desenhe uma sprite primeiro (este quadro está vazio).'; return; }
-    const dys=[0,1,1,0], frames=[];
-    for(let k=0;k<dys.length;k++){ const dy=dys[k]; const fr=new Array(S.w*S.h).fill('');
-      for(let i=0;i<base.length;i++){ if(base[i]){ const x=i%S.w,y=Math.floor(i/S.w)+dy; if(y>=0&&y<S.h) fr[y*S.w+x]=base[i]; } } frames.push(fr); }
-    S.frames=frames; S.cur=0; PX.render(); PX.snapshot(); Frames.thumbs(); App.touch(); g('aiMsg').textContent='Animação (balanço) da sua sprite — dê Play.'; },
+  anim(){ genClips(); if(S.clips) g('aiMsg').textContent='Gerado: idle, andar (4 direções) e 4 ataques. Use as abas e o Play.'; },
   fromText(){ const p=(g('aiPrompt').value||'').trim(); if(!p){ g('aiMsg').textContent='Escreva o que desenhar.'; return; }
     g('aiMsg').textContent='Gerando com IA... aguarde alguns segundos.';
     const url='https://image.pollinations.ai/prompt/'+encodeURIComponent(p+' , pixel art sprite, flat colors, plain white background, centered, simple')+'?width=96&height=96&nologo=true';
@@ -373,16 +371,53 @@ const App={ t:null,
   saveJSON(){ dl('data:application/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(serialize(),null,2)), App.safe()+'.json'); },
   openJSON(ev){ const f=ev.target.files[0]; if(!f)return; const r=new FileReader(); r.onload=()=>{ try{ deserialize(JSON.parse(r.result)); }catch(e){ alert('JSON inválido'); } }; r.readAsText(f); ev.target.value=''; },
   drawer(){ const p=document.querySelector('.side.right'), b=document.getElementById('backdrop'), c=document.getElementById('drawerClose'); const open=!p.classList.contains('open'); p.classList.toggle('open',open); b.classList.toggle('show',open); if(c) c.style.display=open?'block':'none'; } };
-function transform(base, dx, dy, flip){ const fr=new Array(S.w*S.h).fill('');
-  for(let i=0;i<base.length;i++){ if(!base[i]) continue; let x=i%S.w, y=Math.floor(i/S.w); if(flip) x=S.w-1-x; x+=dx; y+=dy; if(x>=0&&y>=0&&x<S.w&&y<S.h) fr[y*S.w+x]=base[i]; } return fr; }
-const CLIPDEFS={ 'idle':[[0,0],[0,1],[0,1],[0,0]], 'andar-baixo':[[0,0],[-1,1],[0,0],[1,1]], 'andar-cima':[[0,0],[1,1],[0,0],[-1,1]], 'andar-dir':[[0,0],[1,0],[2,1],[1,0]], 'andar-esq':[[0,0,1],[-1,0,1],[-2,1,1],[-1,0,1]], 'ataque-1':[[0,0],[2,0],[4,0],[1,0]], 'ataque-2':[[0,0],[-2,0],[5,-1],[1,0]], 'ataque-3':[[0,0],[0,-3],[0,3],[0,1]], 'ataque-4':[[0,0,1],[0,0,0],[0,0,1],[0,0,0]] };
+function ffp(base, p){ const dx=p.dx||0, dy=p.dy||0, sx=p.sx||1, sy=p.sy||1, flip=p.flip?1:0;
+  let minx=S.w,maxx=0,miny=S.h,maxy=0,any=false;
+  for(let i=0;i<base.length;i++){ if(base[i]){ any=true; const x=i%S.w,y=Math.floor(i/S.w); if(x<minx)minx=x; if(x>maxx)maxx=x; if(y<miny)miny=y; if(y>maxy)maxy=y; } }
+  if(!any) return base.slice();
+  const cx=(minx+maxx)/2, cy=maxy, out=new Array(S.w*S.h).fill('');
+  for(let oy=0;oy<S.h;oy++) for(let ox=0;ox<S.w;ox++){ let X=ox-dx, Y=oy-dy; let sX=cx+(X-cx)/sx, sY=cy+(Y-cy)/sy; let bx=Math.round(sX), by=Math.round(sY); if(flip) bx=S.w-1-bx; if(bx>=0&&by>=0&&bx<S.w&&by<S.h){ const c=base[by*S.w+bx]; if(c) out[oy*S.w+ox]=c; } }
+  return out; }
+const CLIPS={
+  'idle':[{},{dy:0,sy:1.03},{dy:-1,sy:1.06},{dy:-1,sy:1.05},{dy:0,sy:1.02},{sy:0.98}],
+  'andar-baixo':[{},{dx:1,dy:-1},{dx:1,sy:0.95},{dx:1,dy:-1},{},{dx:-1,dy:-1},{dx:-1,sy:0.95},{dx:-1,dy:-1}],
+  'andar-cima':[{},{dx:-1,dy:-1},{dx:-1,sy:0.95},{dx:-1,dy:-1},{},{dx:1,dy:-1},{dx:1,sy:0.95},{dx:1,dy:-1}],
+  'andar-dir':[{},{dx:1,dy:-1},{dx:2,sy:0.95},{dx:3,dy:-1},{dx:3},{dx:2,dy:-1},{dx:1,sy:0.95},{dx:0,dy:-1}],
+  'andar-esq':[{flip:1},{flip:1,dx:-1,dy:-1},{flip:1,dx:-2,sy:0.95},{flip:1,dx:-3,dy:-1},{flip:1,dx:-3},{flip:1,dx:-2,dy:-1},{flip:1,dx:-1,sy:0.95},{flip:1,dy:-1}],
+  'ataque-1':[{},{dx:-1,sy:0.94},{dx:-2,sy:0.9},{dx:3,sx:1.12},{dx:6,sx:1.2},{dx:4},{dx:2},{}],
+  'ataque-2':[{},{dy:-1,sy:0.9},{dy:-2,sy:0.86},{dy:2,sx:1.12,sy:1.12},{dy:1},{dy:0},{},{}],
+  'ataque-3':[{},{dx:1,dy:-1,sy:0.95},{dx:-2,sy:0.88},{dx:6,sx:1.22},{dx:3},{dx:1},{},{}],
+  'ataque-4':[{sy:1.05},{flip:1,sx:0.88},{sx:1.12},{flip:1,sx:0.88},{sx:1.05},{}]
+};
 function genClips(){ const base=(S.frames[S.cur]||[]).slice(); if(!base.some(x=>x)){ const m=g('aiMsg'); if(m)m.textContent='Gere/importe uma sprite primeiro.'; return; }
-  S.clips={}; for(const name in CLIPDEFS){ S.clips[name]=CLIPDEFS[name].map(d=>transform(base,d[0],d[1],d[2]||0)); }
+  S.clips={}; for(const name in CLIPS){ S.clips[name]=CLIPS[name].map(p=>ffp(base,p)); }
   S.clip='idle'; S.frames=S.clips['idle']; S.cur=0; buildClipBar(); PX.render(); PX.snapshot(); Frames.thumbs(); App.touch(); }
 function buildClipBar(){ const bar=g('clipBar'); if(!bar) return; bar.innerHTML=''; if(!S.clips) return;
   Object.keys(S.clips).forEach(name=>{ const b=document.createElement('button'); b.textContent=name; if(name===S.clip)b.className='on'; b.style.padding='5px 8px'; b.onclick=()=>switchClip(name); bar.appendChild(b); });
   const sep=document.createElement('span'); sep.style.cssText='width:1px;height:26px;background:var(--line);margin:0 4px'; bar.appendChild(sep); }
 function switchClip(name){ if(!S.clips||!S.clips[name]) return; S.clip=name; S.frames=S.clips[name]; S.cur=0; buildClipBar(); PX.render(); Frames.thumbs(); }
+const AnimText={
+  norm(t){ return (t||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,''); },
+  parse(text){ const t=this.norm(text); const N=8; const fr=[]; for(let k=0;k<N;k++) fr.push({dx:0,dy:0,sx:1,sy:1,flip:0});
+    const amp=/(forte|muito|grande|exager|alto)/.test(t)?1.7 : /(pouco|leve|sutil|fraco)/.test(t)?0.5 : 1;
+    let any=false; const add=(k,o)=>{ for(const key in o){ if(key==='flip') fr[k].flip=o.flip; else if(key==='sx'||key==='sy') fr[k][key]*=o[key]; else fr[k][key]+=o[key]; } };
+    for(let k=0;k<N;k++){ const t2=k/N;
+      if(/(pul|salt)/.test(t)){ any=true; add(k,{dy:-Math.round(Math.sin(t2*Math.PI)*5*amp)}); if(t2>0.8) add(k,{sy:0.9}); }
+      if(/(gir|rod|spin|rodopi)/.test(t)){ any=true; fr[k].flip=k%2; add(k,{sx:1-0.25*Math.abs(Math.cos(t2*Math.PI))}); }
+      if(/(trem|vibr|chacoalh|estremec)/.test(t)){ any=true; add(k,{dx:Math.round((k%2?1:-1)*1.5*amp)}); }
+      if(/(balanc|oscil|acen|gingar)/.test(t)){ any=true; add(k,{dx:Math.round(Math.sin(t2*2*Math.PI)*2*amp)}); }
+      if(/(puls|respir|bate|cora)/.test(t)){ any=true; const sc=1+0.1*Math.sin(t2*2*Math.PI)*amp; add(k,{sy:sc,sx:1/Math.sqrt(sc)}); }
+      if(/(flutu|levit|sobe.*desce|cima.*baixo)/.test(t)){ any=true; add(k,{dy:Math.round(Math.sin(t2*2*Math.PI)*3*amp)}); }
+      if(/(and|camin|march|corr)/.test(t)){ any=true; add(k,{dx:Math.round(Math.sin(t2*2*Math.PI)*2*amp), dy:-Math.round(Math.abs(Math.sin(t2*2*Math.PI)))}); }
+      if(/(ataq|golp|atac|soco|estoc|chut)/.test(t)){ any=true; if(t2<0.35) add(k,{dx:-Math.round(2*amp), sy:0.92}); else if(t2<0.6) add(k,{dx:Math.round(6*amp), sx:1.18}); else add(k,{dx:Math.round(3*amp*(1-t2))}); }
+    }
+    return any?fr:null; },
+  create(){ const base=(S.frames[S.cur]||[]).slice(); if(!base.some(x=>x)){ g('aiMsg').textContent='Gere/importe uma sprite primeiro.'; return; }
+    const txt=(g('animPrompt').value||'').trim(); const params=this.parse(txt);
+    if(!params){ g('aiMsg').textContent='Não entendi. Tente: pular, girar, tremer, balançar, pulsar, flutuar, andar, atacar.'; return; }
+    let name=(txt.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,16))||'anim';
+    if(!S.clips) S.clips={}; if(S.clips[name]) name=name+'-2'; S.clips[name]=params.map(p=>ffp(base,p)); S.clip=name; S.frames=S.clips[name]; S.cur=0; buildClipBar(); PX.render(); PX.snapshot(); Frames.thumbs(); App.touch(); g('aiMsg').textContent='Animação "'+name+'" criada — dê Play.'; }
+};
 function serialize(){ S.name=g('projName').value; return {v:1,name:S.name,w:S.w,h:S.h,frames:S.frames,clips:S.clips,clip:S.clip}; }
 function deserialize(o){ S=blank(); S.name=o.name||'pixel-art'; S.w=o.w||32; S.h=o.h||32; S.frames=(o.frames&&o.frames.length)?o.frames:[new Array(S.w*S.h).fill('')]; S.cur=0; if(o.clips){ S.clips=o.clips; S.clip=o.clip||Object.keys(o.clips)[0]; if(S.clips[S.clip]) S.frames=S.clips[S.clip]; } g('projName').value=S.name; boot2(); }
 
