@@ -115,6 +115,8 @@
       <div class="card"><h3>Ferramentas</h3>
         <div class="tools" id="toolBtns"></div>
         <div class="row" style="margin-top:8px"><button onclick="PX.undo()" title="Ctrl+Z">↶</button><button onclick="PX.redo()" title="Ctrl+Y">↷</button><button class="danger" onclick="PX.clearFrame()">Limpar</button></div>
+        <button id="symBtn" onclick="PX.cycleSym()" style="width:100%;margin-top:6px">Simetria: nenhuma</button>
+        <p class="note" style="margin-top:6px">Dica: botão direito = conta-gotas.</p>
       </div>
       <div class="card"><h3>Cor</h3>
         <input type="color" id="colorPick" value="#1b9e4b" oninput="Palette.setColor(this.value)">
@@ -144,6 +146,12 @@
         <button style="margin-top:6px;width:100%" onclick="ExportPX.sheet()">Sprite-sheet (todos)</button>
         <p class="note" id="expMsg" style="margin-top:6px"></p>
       </div>
+      <div class="card"><h3>IA / Gerar</h3>
+        <input id="aiPrompt" placeholder="ex: dragão verde, espada, nave">
+        <button class="primary" style="width:100%;margin-top:6px" onclick="AI2.fromText()">✨ Gerar com IA (texto)</button>
+        <div class="row" style="margin-top:6px"><button style="flex:1" onclick="AI2.sprite()">🎲 Aleatório</button><button style="flex:1" onclick="AI2.anim()">▶ Animação</button></div>
+        <p class="note" id="aiMsg" style="margin-top:6px">Texto = IA grátis online (precisa de internet). Aleatório/Animação são offline.</p>
+      </div>
     </div>
   </div>
 
@@ -164,7 +172,7 @@
 const DEFAULT_FB_CONFIG = { apiKey:"AIzaSyALwzr4Ur2X0ptWIjQJq57kVf62vCa0FIY", authDomain:"ia-asset-studio.firebaseapp.com", projectId:"ia-asset-studio", storageBucket:"ia-asset-studio.firebasestorage.app", messagingSenderId:"303237200701", appId:"1:303237200701:web:97006f81f69b438f492354" };
 const DEFAULT_PALETTE=['#000000','#1a1a1a','#3d3d3d','#ffffff','#7f0622','#d62828','#f77f00','#fcbf49','#1b4332','#2d6a4f','#52b788','#95d5b2','#023e8a','#0077b6','#48cae4','#caf0f8','#3a0ca3','#7209b7','#b5179e','#f72585','#5c3a1a','#7a4d26','#a0703c','#deb887','#7FFFD4','#D4AF37','#8fb89c','#ff6b6b'];
 let S = blank();
-function blank(){ return { name:'pixel-art', w:32, h:32, frames:[ new Array(32*32).fill('') ], cur:0, color:'#1b9e4b', tool:'pencil', zoom:14, grid:true, onion:false }; }
+function blank(){ return { name:'pixel-art', w:32, h:32, frames:[ new Array(32*32).fill('') ], cur:0, color:'#1b9e4b', tool:'pencil', zoom:14, grid:true, onion:false, sym:'none' }; }
 function frame(){ return S.frames[S.cur]; }
 
 /* ============ PX (render + draw) ============ */
@@ -185,28 +193,38 @@ const PX = {
   },
   paint(arr,alpha){ const z=S.zoom,c=this.ctx; c.globalAlpha=alpha; for(let i=0;i<arr.length;i++){ const col=arr[i]; if(col){ c.fillStyle=col; c.fillRect((i%S.w)*z,Math.floor(i/S.w)*z,z,z); } } c.globalAlpha=1; },
   bind(){ const cv=this.cv;
-    cv.addEventListener('pointerdown',e=>{ cv.setPointerCapture(e.pointerId); this.drawing=true; const cl=this.cell(e); this.startCell=cl; this.last=cl; this.apply(cl,e); });
+    cv.addEventListener('contextmenu',e=>e.preventDefault());
+    cv.addEventListener('pointerdown',e=>{ const cl=this.cell(e); if(e.button===2){ const f=frame(); if(cl>=0&&f[cl]) Palette.setColor(f[cl]); return; } cv.setPointerCapture(e.pointerId); this.drawing=true; this.startCell=cl; this.last=cl; this.apply(cl,e); });
     cv.addEventListener('pointermove',e=>{ if(!this.drawing) return; const cl=this.cell(e); if(cl<0) return;
-      if(S.tool==='line'||S.tool==='rect'){ this.preview=this.shape(this.startCell, cl, S.tool); this.render(); }
+      if(S.tool==='line'||S.tool==='rect'||S.tool==='ellipse'){ this.preview=this.shape(this.startCell, cl, S.tool); this.render(); }
       else { this.lineTo(cl); } });
     window.addEventListener('pointerup',()=>{ if(!this.drawing) return; this.drawing=false;
-      if(this.preview){ const f=frame(); this.preview.forEach((v,i)=>{ if(v) f[i]=v; }); this.preview=null; this.render(); }
+      if(this.preview){ this.preview.forEach((v,i)=>{ if(v) this.setPx(i,v); }); this.preview=null; this.render(); }
       this.snapshot(); Frames.thumbs(); App.touch(); });
   },
+  mir(i){ const x=i%S.w,y=Math.floor(i/S.w),o=[i];
+    if(S.sym==='h'||S.sym==='hv') o.push(y*S.w+(S.w-1-x));
+    if(S.sym==='v'||S.sym==='hv') o.push((S.h-1-y)*S.w+x);
+    if(S.sym==='hv') o.push((S.h-1-y)*S.w+(S.w-1-x));
+    return o; },
+  setPx(i,col){ const f=frame(); this.mir(i).forEach(k=>{ f[k]=col; }); },
+  cycleSym(){ const seq=['none','h','v','hv'], lbl={none:'nenhuma',h:'horizontal',v:'vertical',hv:'4 lados'}; S.sym=seq[(seq.indexOf(S.sym)+1)%4]; const b=document.getElementById('symBtn'); b.textContent='Simetria: '+lbl[S.sym]; b.classList.toggle('on',S.sym!=='none'); },
   apply(cl,e){ if(cl<0) return; const f=frame();
-    if(S.tool==='pencil') f[cl]=S.color;
-    else if(S.tool==='eraser') f[cl]='';
+    if(S.tool==='pencil') this.setPx(cl,S.color);
+    else if(S.tool==='eraser') this.setPx(cl,'');
     else if(S.tool==='bucket') this.fill(cl);
     else if(S.tool==='picker'){ if(f[cl]) Palette.setColor(f[cl]); }
     this.render(); },
   lineTo(cl){ // continuous pencil/eraser between last and cl
     if(S.tool==='bucket'||S.tool==='picker'){ this.apply(cl); this.last=cl; return; }
     const pts=this.bres(this.last%S.w, Math.floor(this.last/S.w), cl%S.w, Math.floor(cl/S.w)); const f=frame();
-    pts.forEach(p=>{ const i=p[1]*S.w+p[0]; if(S.tool==='eraser') f[i]=''; else f[i]=S.color; }); this.last=cl; this.render(); },
+    pts.forEach(p=>{ const i=p[1]*S.w+p[0]; this.setPx(i, S.tool==='eraser'?'':S.color); }); this.last=cl; this.render(); },
   bres(x0,y0,x1,y1){ const pts=[]; let dx=Math.abs(x1-x0),dy=Math.abs(y1-y0),sx=x0<x1?1:-1,sy=y0<y1?1:-1,err=dx-dy;
     while(true){ pts.push([x0,y0]); if(x0===x1&&y0===y1)break; const e2=2*err; if(e2>-dy){err-=dy;x0+=sx;} if(e2<dx){err+=dx;y0+=sy;} } return pts; },
   shape(a,b,kind){ const out=new Array(S.w*S.h).fill(''); const ax=a%S.w,ay=Math.floor(a/S.w),bx=b%S.w,by=Math.floor(b/S.w);
     if(kind==='line'){ this.bres(ax,ay,bx,by).forEach(p=>out[p[1]*S.w+p[0]]=S.color); }
+    else if(kind==='ellipse'){ const cx=(ax+bx)/2, cy=(ay+by)/2, rx=Math.abs(bx-ax)/2, ry=Math.abs(by-ay)/2, steps=Math.max(12,Math.round((rx+ry)*5));
+      for(let t=0;t<steps;t++){ const a2=t/steps*Math.PI*2, px=Math.round(cx+Math.cos(a2)*rx), py=Math.round(cy+Math.sin(a2)*ry); if(px>=0&&py>=0&&px<S.w&&py<S.h) out[py*S.w+px]=S.color; } }
     else { const x0=Math.min(ax,bx),x1=Math.max(ax,bx),y0=Math.min(ay,by),y1=Math.max(ay,by);
       for(let x=x0;x<=x1;x++){ out[y0*S.w+x]=S.color; out[y1*S.w+x]=S.color; } for(let y=y0;y<=y1;y++){ out[y*S.w+x0]=S.color; out[y*S.w+x1]=S.color; } }
     return out; },
@@ -223,7 +241,7 @@ const PX = {
 };
 
 /* ============ Tools / Palette ============ */
-const TOOLS=[['pencil','✏ Lápis'],['eraser','▦ Borracha'],['bucket','🪣 Balde'],['picker','💧 Conta-gotas'],['line','／ Linha'],['rect','▢ Retângulo']];
+const TOOLS=[['pencil','✏ Lápis'],['eraser','▦ Borracha'],['bucket','🪣 Balde'],['picker','💧 Conta-gotas'],['line','／ Linha'],['rect','▢ Retângulo'],['ellipse','◯ Círculo']];
 const Tools={ build(){ const w=document.getElementById('toolBtns'); TOOLS.forEach(([id,lbl])=>{ const b=document.createElement('button'); b.textContent=lbl; b.dataset.t=id; b.className=(S.tool===id?'on':''); b.onclick=()=>Tools.set(id); w.appendChild(b); }); },
   set(id){ S.tool=id; document.querySelectorAll('#toolBtns button').forEach(b=>b.classList.toggle('on',b.dataset.t===id)); } };
 const Palette={ build(){ const w=document.getElementById('palette'); w.innerHTML=''; DEFAULT_PALETTE.forEach(c=>{ const d=document.createElement('div'); d.className='sw'+(c===S.color?' sel':''); d.style.background=c; d.title=c; d.onclick=()=>Palette.setColor(c); w.appendChild(d); }); },
@@ -285,6 +303,37 @@ const Profile={ open(){ g('profile').style.display='flex'; this.refresh(); }, cl
     if(!Cloud.db){ list.innerHTML='<p class="note">Modo local — faça login pra salvar/abrir na nuvem.</p>'; return; }
     list.innerHTML='<p class="note">Carregando...</p>';
     try{ const it=await Cloud.list(); list.innerHTML = it.length? it.map(x=>'<div class="row" style="justify-content:space-between;border-bottom:1px solid var(--line);padding:6px 0"><span>'+esc(x.name||'sem nome')+'</span><span><button onclick="Cloud.open(\''+x.id+'\')">Abrir</button> <button class="danger" onclick="Cloud.del(\''+x.id+'\')">Excluir</button></span></div>').join(''):'<p class="note">Nada salvo ainda.</p>'; }catch(e){ list.innerHTML='<p class="note">Erro: '+e.message+'</p>'; } } };
+
+/* ============ IA / GERADOR ============ */
+function rgbHex(r,g,b){ return '#'+[r,g,b].map(v=>('0'+v.toString(16)).slice(-2)).join(''); }
+function randPal(){ return DEFAULT_PALETTE[Math.floor(Math.random()*DEFAULT_PALETTE.length)]; }
+const AI2={
+  genFrame(colA,colB){ const w=S.w,h=S.h,f=new Array(w*h).fill(''); const half=Math.ceil(w/2);
+    const cx=(w-1)/2, cy=(h-1)/2, maxr=Math.min(w,h)/2;
+    for(let y=0;y<h;y++){ for(let x=0;x<half;x++){ const dx=(x-cx)/maxr, dy=(y-cy)/maxr, dist=Math.sqrt(dx*dx+dy*dy);
+      if(dist<0.92 && Math.random()<0.9*(1-dist)){ const col=Math.random()<0.7?colA:colB; f[y*w+x]=col; f[y*w+(w-1-x)]=col; } } }
+    const out=f.slice();
+    for(let i=0;i<f.length;i++){ if(f[i]) continue; const x=i%w,y=Math.floor(i/w);
+      const nb=[[1,0],[-1,0],[0,1],[0,-1]].some(d=>{ const nx=x+d[0],ny=y+d[1]; return nx>=0&&ny>=0&&nx<w&&ny<h&&f[ny*w+nx]; });
+      if(nb) out[i]='#1a1a1a'; }
+    return out; },
+  sprite(){ S.frames[S.cur]=this.genFrame(randPal(),randPal()); PX.render(); PX.snapshot(); Frames.thumbs(); App.touch(); g('aiMsg').textContent='Sprite aleatória gerada.'; },
+  anim(){ const base=this.genFrame(randPal(),randPal()); const frames=[];
+    for(let k=0;k<4;k++){ const dy=(k===1||k===3)?1:0; const fr=new Array(S.w*S.h).fill('');
+      for(let i=0;i<base.length;i++){ if(base[i]){ const x=i%S.w,y=Math.floor(i/S.w)+dy; if(y<S.h) fr[y*S.w+x]=base[i]; } } frames.push(fr); }
+    S.frames=frames; S.cur=0; PX.render(); PX.snapshot(); Frames.thumbs(); App.touch(); g('aiMsg').textContent='Animação idle (4 quadros) gerada. Dê Play.'; },
+  fromText(){ const p=(g('aiPrompt').value||'').trim(); if(!p){ g('aiMsg').textContent='Escreva o que desenhar.'; return; }
+    g('aiMsg').textContent='Gerando com IA... aguarde alguns segundos.';
+    const url='https://image.pollinations.ai/prompt/'+encodeURIComponent(p+' , pixel art sprite, flat colors, plain white background, centered, simple')+'?width=96&height=96&nologo=true';
+    const img=new Image(); img.crossOrigin='anonymous';
+    img.onload=()=>{ try{ const oc=document.createElement('canvas'); oc.width=S.w; oc.height=S.h; const ox=oc.getContext('2d'); ox.drawImage(img,0,0,S.w,S.h);
+      const d=ox.getImageData(0,0,S.w,S.h).data; const fr=new Array(S.w*S.h).fill('');
+      for(let i=0;i<S.w*S.h;i++){ const r=d[i*4],gg=d[i*4+1],b=d[i*4+2]; if(!(r>238&&gg>238&&b>238)) fr[i]=rgbHex(r,gg,b); }
+      S.frames[S.cur]=fr; PX.render(); PX.snapshot(); Frames.thumbs(); App.touch(); g('aiMsg').textContent='Sprite gerada pela IA!';
+    }catch(e){ g('aiMsg').textContent='A imagem veio sem permissão p/ ler pixels (CORS). Tente "Aleatório".'; } };
+    img.onerror=()=>{ g('aiMsg').textContent='Falha ao gerar (sem internet ou serviço fora). Use Aleatório/Animação.'; };
+    img.src=url; }
+};
 
 /* ============ APP / PERSIST ============ */
 const App={ t:null,
