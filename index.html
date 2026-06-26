@@ -152,10 +152,15 @@
         <div class="row" style="margin-top:6px"><button style="flex:1" onclick="AI2.sprite()">🎲 Aleatório</button><button style="flex:1" onclick="AI2.anim()" title="Gera idle, andar (4 direções) e 4 ataques da sprite atual">▶ Animar (idle/andar/ataques)</button></div>
         <input id="animPrompt" placeholder="anim por texto: pular, girar, atacar forte" style="margin-top:6px">
         <button style="width:100%;margin-top:6px" onclick="AnimText.create()">✨ Criar animação (texto)</button>
+        <label class="row" style="margin-top:4px;font-size:11px;color:var(--muted)">Quadros por animação: <input type="number" id="frmCount" value="12" min="4" max="24" style="width:60px;margin-left:6px"></label>
         <button style="width:100%;margin-top:6px" onclick="document.getElementById('aiImg').click()">🖼 Importar imagem → pixel</button>
         <input type="file" id="aiImg" accept="image/*" style="display:none" onchange="AI2.fromImage(event)">
         <label class="row" style="margin-top:4px;font-size:11px;color:var(--muted)"><input type="checkbox" id="aiSnap" style="width:auto"> &nbsp;Encaixar na paleta do editor</label>
         <label class="row" style="margin-top:4px;font-size:11px;color:var(--muted)">Cores (quantização): <input type="number" id="aiColors" value="16" min="2" max="64" style="width:60px;margin-left:6px"></label>
+        <p class="note" style="margin-top:8px;border-top:1px solid var(--line);padding-top:8px;font-weight:600;color:var(--txt)">Sprite-sheet → animações</p>
+        <p class="note" style="margin-top:2px">Envie uma folha com várias linhas (cada linha = uma animação). Eu detecto a grade e mostro um preview pra você conferir antes de fatiar.</p>
+        <button style="width:100%;margin-top:6px" onclick="document.getElementById('shImg').click()">🎞 Importar sprite-sheet</button>
+        <input type="file" id="shImg" accept="image/*" style="display:none" onchange="AI2.fromSheet(event)">
         <p class="note" id="aiMsg" style="margin-top:6px">Texto = IA grátis online (precisa de internet). Aleatório/Animação são offline.</p>
       </div>
     </div>
@@ -173,6 +178,25 @@
   </div>
 </div>
 <div class="backdrop" id="backdrop" onclick="App.drawer()"></div>
+
+<div id="sheetModal" style="display:none;position:fixed;inset:0;z-index:16000;background:rgba(0,0,0,.72);align-items:center;justify-content:center">
+  <div class="auth-card" style="width:700px;max-width:96%;max-height:94%;overflow:auto">
+    <div class="row" style="justify-content:space-between"><div class="auth-logo" style="margin:0;font-size:1.05em">Importar sprite-sheet</div><button onclick="Sheet.close()">fechar</button></div>
+    <p class="note">A grade foi detectada automaticamente (rótulos de texto são ignorados). <b>Arraste as linhas com o mouse</b> para ajustar os cortes; use os campos abaixo para mudar a quantidade. Depois clique em Fatiar.</p>
+    <div style="background:#0a0f0c;border:1px solid var(--line);border-radius:6px;overflow:auto;max-height:46vh;display:flex;justify-content:center;padding:6px">
+      <canvas id="shPrev" style="image-rendering:pixelated;max-width:100%"></canvas>
+    </div>
+    <label class="row" style="margin-top:8px;font-size:11px;color:var(--muted)"><input type="checkbox" id="shAuto" checked style="width:auto" onchange="Sheet.onAuto()"> &nbsp;Detectar grade automaticamente</label>
+    <div class="row" style="gap:6px;margin-top:4px">
+      <label style="font-size:11px;color:var(--muted);flex:1">Colunas (quadros)<input type="number" id="shCols2" value="12" min="1" max="64" style="width:100%" oninput="Sheet.onCols()"></label>
+      <label style="font-size:11px;color:var(--muted);flex:1">Linhas (animações)<input type="number" id="shRows2" value="8" min="1" max="32" style="width:100%" oninput="Sheet.onRows()"></label>
+    </div>
+    <p class="note" id="shDetect" style="margin-top:4px"></p>
+    <input id="shNames2" placeholder="nomes (opcional): idle, andar, correr, pular..." style="margin-top:4px">
+    <label class="row" style="margin-top:4px;font-size:11px;color:var(--muted)"><input type="checkbox" id="shTrim2" checked style="width:auto"> &nbsp;Recortar e centralizar cada quadro</label>
+    <button class="primary" style="width:100%;margin-top:8px" onclick="Sheet.confirm()">🎞 Fatiar em animações</button>
+  </div>
+</div>
 
 <script>
 /* ============ ESTADO ============ */
@@ -359,7 +383,109 @@ const AI2={
       S.frames[S.cur]=fr; genClips(); g('aiMsg').textContent='Imagem convertida e animada (idle, andar, 4 ataques)!';
     }catch(e){ g('aiMsg').textContent='Erro ao converter: '+e.message; } URL.revokeObjectURL(url); };
     img.onerror=()=>{ g('aiMsg').textContent='Não consegui ler essa imagem.'; URL.revokeObjectURL(url); };
+    img.src=url; ev.target.value=''; },
+  fromSheet(ev){ const file=ev.target.files[0]; if(!file) return; const url=URL.createObjectURL(file); const img=new Image();
+    img.onload=()=>{ Sheet.open(img); URL.revokeObjectURL(url); };
+    img.onerror=()=>{ g('aiMsg').textContent='Nao consegui ler essa imagem.'; URL.revokeObjectURL(url); };
     img.src=url; ev.target.value=''; }
+};
+
+/* ============ SPRITE-SHEET (auto-detecção + ajuste manual com mouse) ============ */
+const Sheet={ img:null, bands:[], colsB:[], bg:[0,0,0], _data:null, _iw:0, _ih:0, sc:1, drag:null, _bound:false,
+  open(img){ this.img=img; this.detect(); this.buildCols(this._suggest||12); g('sheetModal').style.display='flex'; this.bind(); this.redraw(); },
+  close(){ g('sheetModal').style.display='none'; this.img=null; this._data=null; },
+  _isBg(i){ const d=this._data,bg=this.bg; if(d[i*4+3]<40)return true; return (Math.abs(d[i*4]-bg[0])+Math.abs(d[i*4+1]-bg[1])+Math.abs(d[i*4+2]-bg[2]))<70; },
+  detect(){ const img=this.img, iw=img.naturalWidth, ih=img.naturalHeight;
+    const sc=document.createElement('canvas'); sc.width=iw; sc.height=ih; const sx=sc.getContext('2d'); sx.imageSmoothingEnabled=false; sx.drawImage(img,0,0);
+    const d=sx.getImageData(0,0,iw,ih).data; this._data=d; this._iw=iw; this._ih=ih;
+    const corners=[0,(iw-1),(ih-1)*iw,(ih*iw-1)].map(p=>[d[p*4],d[p*4+1],d[p*4+2]]);
+    this.bg=[0,1,2].map(k=>Math.round(corners.reduce((s,c)=>s+c[k],0)/4));
+    const rowMass=new Array(ih).fill(0);
+    for(let y=0;y<ih;y++){ let m=0; const base=y*iw; for(let x=0;x<iw;x++){ if(!this._isBg(base+x)) m++; } rowMass[y]=m; }
+    const thr=Math.max(2, iw*0.01);
+    let bands=[], st=-1;
+    for(let y=0;y<ih;y++){ if(rowMass[y]>thr){ if(st<0)st=y; } else { if(st>=0){ bands.push([st,y-1]); st=-1; } } }
+    if(st>=0) bands.push([st,ih-1]);
+    const heights=bands.map(b=>b[1]-b[0]+1), maxH=Math.max(1,...heights);
+    let rows=bands.filter((b,i)=>heights[i]>=0.4*maxH);
+    if(!rows.length) rows=bands.length?bands:[[0,ih-1]];
+    this.bands=rows.map(b=>[b[0],b[1]]);
+    let best=rows[0], bestMass=-1;
+    rows.forEach(b=>{ let m=0; for(let y=b[0];y<=b[1];y++) m+=rowMass[y]; if(m>bestMass){bestMass=m;best=b;} });
+    this._suggest=this._countCols(best);
+    g('shRows2').value=this.bands.length||1;
+    g('shCols2').value=this._suggest||12;
+  },
+  _countCols(band){ const iw=this._iw; const colMass=new Array(iw).fill(0);
+    for(let x=0;x<iw;x++){ let m=0; for(let y=band[0];y<=band[1];y++){ if(!this._isBg(y*iw+x)) m++; } colMass[x]=m; }
+    const maxM=Math.max(1,...colMass); const E=[];
+    // para cada n candidato, mede o quao "vazias" ficam as linhas de corte (boundary-alignment)
+    for(let n=2;n<=24;n++){ let s=0; for(let i=1;i<n;i++){ const x=Math.round(i*iw/n); let mm=colMass[x]; for(let dlt=-3;dlt<=3;dlt++){ const xx=x+dlt; if(xx>=0&&xx<iw) mm=Math.min(mm,colMass[xx]); } s+=1-mm/maxM; } E[n]=s/(n-1); }
+    let best=2; for(let n=2;n<=24;n++) if(E[n]>E[best]) best=n;
+    const thr=Math.max(0.6, 0.92*E[best]); let pick=2;
+    for(let n=2;n<=24;n++) if(E[n]>=thr) pick=n; // maior n cujos cortes caem em vazios = nº de quadros
+    return pick; },
+  cols(){ return this.colsB.length-1; },
+  buildCols(n){ n=Math.max(1,Math.min(64,n|0)); const iw=this._iw; this.colsB=[]; for(let c=0;c<=n;c++) this.colsB.push(Math.round(c*iw/n)); },
+  buildBandsEven(n){ n=Math.max(1,Math.min(32,n|0)); const ih=this._ih; this.bands=[]; const ch=ih/n; for(let r=0;r<n;r++) this.bands.push([Math.round(r*ch),Math.round((r+1)*ch)-1]); },
+  onCols(){ this.buildCols(parseInt(g('shCols2').value)||12); this.redraw(); },
+  onRows(){ g('shAuto').checked=false; this.buildBandsEven(parseInt(g('shRows2').value)||8); this.redraw(); },
+  onAuto(){ if(g('shAuto').checked){ this.detect(); } else { this.buildBandsEven(parseInt(g('shRows2').value)||this.bands.length||8); } this.redraw(); },
+  redraw(){ const img=this.img; if(!img) return; const cv=g('shPrev'); const iw=this._iw, ih=this._ih;
+    const maxW=640, sc=Math.min(1,maxW/iw); this.sc=sc; cv.width=Math.round(iw*sc); cv.height=Math.round(ih*sc);
+    const cx=cv.getContext('2d'); cx.imageSmoothingEnabled=false; cx.clearRect(0,0,cv.width,cv.height); cx.drawImage(img,0,0,cv.width,cv.height);
+    // bandas (fileiras)
+    cx.lineWidth=2; cx.strokeStyle='rgba(212,175,55,.95)';
+    this.bands.forEach(b=>{ const y0=b[0]*sc, hh=(b[1]-b[0]+1)*sc; cx.strokeRect(1, y0+1, cv.width-2, Math.max(1,hh-2));
+      // alças nas bordas (esquerda)
+      cx.fillStyle='rgba(212,175,55,1)'; cx.fillRect(0,y0-2,10,4); cx.fillRect(0,(b[1]+1)*sc-2,10,4); });
+    // colunas
+    cx.lineWidth=1; cx.strokeStyle='rgba(127,255,212,.95)';
+    for(let i=1;i<this.colsB.length-1;i++){ const x=this.colsB[i]*sc; cx.beginPath(); cx.moveTo(x+0.5,0); cx.lineTo(x+0.5,cv.height); cx.stroke();
+      cx.fillStyle='rgba(127,255,212,1)'; cx.fillRect(x-2,0,4,9); }
+    g('shDetect').textContent='Fileiras: '+this.bands.length+'  •  Colunas: '+this.cols()+'  — arraste as linhas verdes/douradas para ajustar.';
+  },
+  _evt(e){ const cv=g('shPrev'), r=cv.getBoundingClientRect(); return { x:(e.clientX-r.left)/r.width*this._iw, y:(e.clientY-r.top)/r.height*this._ih, tx:8/r.width*this._iw, ty:8/r.height*this._ih, r }; },
+  _hit(p){ for(let i=1;i<this.colsB.length-1;i++){ if(Math.abs(p.x-this.colsB[i])<p.tx) return {t:'col',i}; }
+    for(let b=0;b<this.bands.length;b++){ if(Math.abs(p.y-this.bands[b][0])<p.ty) return {t:'rt',i:b}; if(Math.abs(p.y-(this.bands[b][1]+1))<p.ty) return {t:'rb',i:b}; }
+    return null; },
+  bind(){ const cv=g('shPrev'); if(this._bound) return; this._bound=true; cv.style.touchAction='none';
+    cv.onpointerdown=(e)=>{ const p=this._evt(e); const h=this._hit(p); if(h){ this.drag=h; cv.setPointerCapture(e.pointerId); e.preventDefault(); } };
+    cv.onpointermove=(e)=>{ const p=this._evt(e); if(this.drag){ this._apply(this.drag,p); this.redraw(); } else { const h=this._hit(p); cv.style.cursor=h?(h.t==='col'?'ew-resize':'ns-resize'):'crosshair'; } };
+    const end=(e)=>{ if(this.drag){ this.drag=null; try{cv.releasePointerCapture(e.pointerId);}catch(_){}}};
+    cv.onpointerup=end; cv.onpointercancel=end;
+  },
+  _apply(h,p){ const ih=this._ih;
+    if(h.t==='col'){ const i=h.i, lo=this.colsB[i-1]+2, hi=this.colsB[i+1]-2; this.colsB[i]=Math.max(lo,Math.min(hi,Math.round(p.x))); }
+    else if(h.t==='rt'){ const b=this.bands[h.i], prev=h.i>0?this.bands[h.i-1][1]+2:0; b[0]=Math.max(prev,Math.min(b[1]-3,Math.round(p.y))); }
+    else if(h.t==='rb'){ const b=this.bands[h.i], next=h.i<this.bands.length-1?this.bands[h.i+1][0]-2:ih-1; b[1]=Math.min(next,Math.max(b[0]+3,Math.round(p.y))); } },
+  confirm(){ const img=this.img; if(!img) return; const iw=this._iw;
+    const names=(g('shNames2').value||'').split(',').map(x=>x.trim()).filter(x=>x);
+    const trim=g('shTrim2').checked, snap=g('aiSnap').checked, ncol=Math.max(2,Math.min(64,parseInt(g('aiColors').value)||16));
+    const bg=this.bg, full=this._data, B=this.colsB, bands=this.bands;
+    const oc=document.createElement('canvas'); oc.width=S.w; oc.height=S.h; const ox=oc.getContext('2d');
+    const isBg=(R,G,Bl,A)=>{ if(A<40) return true; return (Math.abs(R-bg[0])+Math.abs(G-bg[1])+Math.abs(Bl-bg[2]))<70; };
+    const clips={};
+    for(let r=0;r<bands.length;r++){ const ry0=bands[r][0], ry1=bands[r][1]+1, frames=[];
+      for(let c=0;c<B.length-1;c++){ let x0=B[c], y0=ry0, x1=B[c+1], y1=ry1;
+        if(trim){ let minX=x1,minY=y1,maxX=x0,maxY=y0,any=false;
+          for(let y=y0;y<y1;y++) for(let x=x0;x<x1;x++){ const i=(y*iw+x)*4; if(!isBg(full[i],full[i+1],full[i+2],full[i+3])){ any=true; if(x<minX)minX=x; if(x>maxX)maxX=x; if(y<minY)minY=y; if(y>maxY)maxY=y; } }
+          if(any){ x0=minX; y0=minY; x1=maxX+1; y1=maxY+1; } }
+        const cwp=Math.max(1,x1-x0), chp=Math.max(1,y1-y0);
+        ox.clearRect(0,0,S.w,S.h); ox.imageSmoothingEnabled=true;
+        const f=Math.min(S.w/cwp,S.h/chp), dw=Math.max(1,Math.round(cwp*f)), dh=Math.max(1,Math.round(chp*f)), dx=Math.floor((S.w-dw)/2), dy=Math.floor((S.h-dh)/2);
+        ox.drawImage(img, x0,y0,cwp,chp, dx,dy,dw,dh);
+        const d=ox.getImageData(0,0,S.w,S.h).data, fr=new Array(S.w*S.h).fill(''), op=[], ix=[];
+        for(let i=0;i<S.w*S.h;i++){ const R=d[i*4],G=d[i*4+1],Bl=d[i*4+2],A=d[i*4+3]; if(isBg(R,G,Bl,A)) continue; op.push([R,G,Bl]); ix.push(i); }
+        if(snap){ for(let k=0;k<ix.length;k++) fr[ix[k]]=nearestPal(op[k][0],op[k][1],op[k][2]); }
+        else if(op.length){ const pal=medianCut(op,ncol); for(let k=0;k<ix.length;k++){ const cc=nearestRgb(pal,op[k][0],op[k][1],op[k][2]); fr[ix[k]]=rgbHex(cc[0],cc[1],cc[2]); } }
+        frames.push(fr); }
+      let nm=(names[r]||('linha-'+(r+1))).toLowerCase().replace(/[^a-z0-9\-]+/g,'-').replace(/^-+|-+$/g,'')||('linha-'+(r+1));
+      if(clips[nm]) nm=nm+'-'+(r+1); clips[nm]=frames; }
+    S.clips=clips; S.clip=Object.keys(clips)[0]; S.frames=S.clips[S.clip]; S.cur=0;
+    buildClipBar(); PX.render(); PX.snapshot(); Frames.thumbs(); App.touch();
+    g('aiMsg').textContent=bands.length+' animacao(oes) importada(s), '+this.cols()+' quadros cada. Use as abas e o Play.';
+    this.close(); }
 };
 
 /* ============ APP / PERSIST ============ */
@@ -378,19 +504,30 @@ function ffp(base, p){ const dx=p.dx||0, dy=p.dy||0, sx=p.sx||1, sy=p.sy||1, fli
   const cx=(minx+maxx)/2, cy=maxy, out=new Array(S.w*S.h).fill('');
   for(let oy=0;oy<S.h;oy++) for(let ox=0;ox<S.w;ox++){ let X=ox-dx, Y=oy-dy; let sX=cx+(X-cx)/sx, sY=cy+(Y-cy)/sy; let bx=Math.round(sX), by=Math.round(sY); if(flip) bx=S.w-1-bx; if(bx>=0&&by>=0&&bx<S.w&&by<S.h){ const c=base[by*S.w+bx]; if(c) out[oy*S.w+ox]=c; } }
   return out; }
-const CLIPS={
-  'idle':[{},{dy:0,sy:1.03},{dy:-1,sy:1.06},{dy:-1,sy:1.05},{dy:0,sy:1.02},{sy:0.98}],
-  'andar-baixo':[{},{dx:1,dy:-1},{dx:1,sy:0.95},{dx:1,dy:-1},{},{dx:-1,dy:-1},{dx:-1,sy:0.95},{dx:-1,dy:-1}],
-  'andar-cima':[{},{dx:-1,dy:-1},{dx:-1,sy:0.95},{dx:-1,dy:-1},{},{dx:1,dy:-1},{dx:1,sy:0.95},{dx:1,dy:-1}],
-  'andar-dir':[{},{dx:1,dy:-1},{dx:2,sy:0.95},{dx:3,dy:-1},{dx:3},{dx:2,dy:-1},{dx:1,sy:0.95},{dx:0,dy:-1}],
-  'andar-esq':[{flip:1},{flip:1,dx:-1,dy:-1},{flip:1,dx:-2,sy:0.95},{flip:1,dx:-3,dy:-1},{flip:1,dx:-3},{flip:1,dx:-2,dy:-1},{flip:1,dx:-1,sy:0.95},{flip:1,dy:-1}],
-  'ataque-1':[{},{dx:-1,sy:0.94},{dx:-2,sy:0.9},{dx:3,sx:1.12},{dx:6,sx:1.2},{dx:4},{dx:2},{}],
-  'ataque-2':[{},{dy:-1,sy:0.9},{dy:-2,sy:0.86},{dy:2,sx:1.12,sy:1.12},{dy:1},{dy:0},{},{}],
-  'ataque-3':[{},{dx:1,dy:-1,sy:0.95},{dx:-2,sy:0.88},{dx:6,sx:1.22},{dx:3},{dx:1},{},{}],
-  'ataque-4':[{sy:1.05},{flip:1,sx:0.88},{sx:1.12},{flip:1,sx:0.88},{sx:1.05},{}]
-};
+function clipParams(kind, N){
+  const P=Math.PI, out=[], ss=x=>x<0?0:(x>1?1:x*x*(3-2*x));
+  for(let k=0;k<N;k++){ const t=k/N; const p={dx:0,dy:0,sx:1,sy:1,flip:0};
+    if(kind==='idle'){ p.dy=-Math.round(Math.max(0,Math.sin(t*P*2))); p.sy=1+0.05*Math.sin(t*P*2); }
+    else if(kind.slice(0,5)==='andar'){ const ph=t*P*4;
+      p.dy=-Math.round(Math.abs(Math.sin(ph))); p.dx=Math.round(Math.sin(ph)*1.2); p.sy=1-0.05*Math.abs(Math.cos(ph));
+      if(kind==='andar-esq') p.flip=1;
+      if(kind==='andar-cima') p.dx=Math.round(Math.cos(ph)*1.2);
+    } else {
+      if(kind==='ataque-4'){ p.flip=Math.floor(t*N)%2; p.sx=1-0.25*Math.abs(Math.sin(t*P)); }
+      else { const axis=(kind==='ataque-2')?'dy':'dx', amp=(kind==='ataque-3')?7:5; let v;
+        if(t<0.3) v=-2*ss(t/0.3); else if(t<0.5) v=amp*ss((t-0.3)/0.2); else v=amp*(1-ss((t-0.5)/0.5));
+        p[axis]=Math.round(v)*(axis==='dy'?-1:1);
+        if(t>=0.3&&t<0.55) p.sx=1.15; else if(t<0.3) p.sy=0.93;
+      }
+    }
+    out.push(p);
+  }
+  return out;
+}
+const CLIP_NAMES=['idle','andar-baixo','andar-cima','andar-dir','andar-esq','ataque-1','ataque-2','ataque-3','ataque-4'];
+function frmN(){ return Math.max(4, Math.min(24, parseInt((document.getElementById('frmCount')||{}).value)||12)); }
 function genClips(){ const base=(S.frames[S.cur]||[]).slice(); if(!base.some(x=>x)){ const m=g('aiMsg'); if(m)m.textContent='Gere/importe uma sprite primeiro.'; return; }
-  S.clips={}; for(const name in CLIPS){ S.clips[name]=CLIPS[name].map(p=>ffp(base,p)); }
+  const N=frmN(); S.clips={}; CLIP_NAMES.forEach(name=>{ S.clips[name]=clipParams(name,N).map(p=>ffp(base,p)); });
   S.clip='idle'; S.frames=S.clips['idle']; S.cur=0; buildClipBar(); PX.render(); PX.snapshot(); Frames.thumbs(); App.touch(); }
 function buildClipBar(){ const bar=g('clipBar'); if(!bar) return; bar.innerHTML=''; if(!S.clips) return;
   Object.keys(S.clips).forEach(name=>{ const b=document.createElement('button'); b.textContent=name; if(name===S.clip)b.className='on'; b.style.padding='5px 8px'; b.onclick=()=>switchClip(name); bar.appendChild(b); });
@@ -398,7 +535,7 @@ function buildClipBar(){ const bar=g('clipBar'); if(!bar) return; bar.innerHTML=
 function switchClip(name){ if(!S.clips||!S.clips[name]) return; S.clip=name; S.frames=S.clips[name]; S.cur=0; buildClipBar(); PX.render(); Frames.thumbs(); }
 const AnimText={
   norm(t){ return (t||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,''); },
-  parse(text){ const t=this.norm(text); const N=8; const fr=[]; for(let k=0;k<N;k++) fr.push({dx:0,dy:0,sx:1,sy:1,flip:0});
+  parse(text,N){ const t=this.norm(text); N=N||8; const fr=[]; for(let k=0;k<N;k++) fr.push({dx:0,dy:0,sx:1,sy:1,flip:0});
     const amp=/(forte|muito|grande|exager|alto)/.test(t)?1.7 : /(pouco|leve|sutil|fraco)/.test(t)?0.5 : 1;
     let any=false; const add=(k,o)=>{ for(const key in o){ if(key==='flip') fr[k].flip=o.flip; else if(key==='sx'||key==='sy') fr[k][key]*=o[key]; else fr[k][key]+=o[key]; } };
     for(let k=0;k<N;k++){ const t2=k/N;
@@ -413,7 +550,7 @@ const AnimText={
     }
     return any?fr:null; },
   create(){ const base=(S.frames[S.cur]||[]).slice(); if(!base.some(x=>x)){ g('aiMsg').textContent='Gere/importe uma sprite primeiro.'; return; }
-    const txt=(g('animPrompt').value||'').trim(); const params=this.parse(txt);
+    const txt=(g('animPrompt').value||'').trim(); const params=this.parse(txt, frmN());
     if(!params){ g('aiMsg').textContent='Não entendi. Tente: pular, girar, tremer, balançar, pulsar, flutuar, andar, atacar.'; return; }
     let name=(txt.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,16))||'anim';
     if(!S.clips) S.clips={}; if(S.clips[name]) name=name+'-2'; S.clips[name]=params.map(p=>ffp(base,p)); S.clip=name; S.frames=S.clips[name]; S.cur=0; buildClipBar(); PX.render(); PX.snapshot(); Frames.thumbs(); App.touch(); g('aiMsg').textContent='Animação "'+name+'" criada — dê Play.'; }
