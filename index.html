@@ -116,6 +116,7 @@
         <div class="tools" id="toolBtns"></div>
         <div class="row" style="margin-top:8px"><button onclick="PX.undo()" title="Ctrl+Z">↶</button><button onclick="PX.redo()" title="Ctrl+Y">↷</button><button class="danger" onclick="PX.clearFrame()">Limpar</button></div>
         <button id="symBtn" onclick="PX.cycleSym()" style="width:100%;margin-top:6px">Simetria: nenhuma</button>
+        <label style="display:block;margin-top:6px;font-size:11px;color:#8fb89c">Tamanho do pincel/borracha: <input type="number" id="brushSize" value="1" min="1" max="16" style="width:56px;margin-left:4px" oninput="S.brush=Math.max(1,Math.min(16,+this.value||1))"></label>
         <p class="note" style="margin-top:6px">Dica: botão direito = conta-gotas.</p>
       </div>
       <div class="card"><h3>Cor</h3>
@@ -203,7 +204,7 @@
 const DEFAULT_FB_CONFIG = { apiKey:"AIzaSyALwzr4Ur2X0ptWIjQJq57kVf62vCa0FIY", authDomain:"ia-asset-studio.firebaseapp.com", projectId:"ia-asset-studio", storageBucket:"ia-asset-studio.firebasestorage.app", messagingSenderId:"303237200701", appId:"1:303237200701:web:97006f81f69b438f492354" };
 const DEFAULT_PALETTE=['#000000','#1a1a1a','#3d3d3d','#ffffff','#7f0622','#d62828','#f77f00','#fcbf49','#1b4332','#2d6a4f','#52b788','#95d5b2','#023e8a','#0077b6','#48cae4','#caf0f8','#3a0ca3','#7209b7','#b5179e','#f72585','#5c3a1a','#7a4d26','#a0703c','#deb887','#7FFFD4','#D4AF37','#8fb89c','#ff6b6b'];
 let S = blank();
-function blank(){ return { name:'pixel-art', w:32, h:32, frames:[ new Array(32*32).fill('') ], cur:0, color:'#1b9e4b', tool:'pencil', zoom:14, grid:true, onion:false, sym:'none', clips:null, clip:'idle' }; }
+function blank(){ return { name:'pixel-art', w:32, h:32, frames:[ new Array(32*32).fill('') ], cur:0, color:'#1b9e4b', tool:'pencil', zoom:14, grid:true, onion:false, sym:'none', brush:1, clips:null, clip:'idle' }; }
 function frame(){ return S.frames[S.cur]; }
 
 /* ============ PX (render + draw) ============ */
@@ -239,17 +240,18 @@ const PX = {
     if(S.sym==='hv') o.push((S.h-1-y)*S.w+(S.w-1-x));
     return o; },
   setPx(i,col){ const f=frame(); this.mir(i).forEach(k=>{ f[k]=col; }); },
+  stamp(i,col){ const b=Math.max(1,S.brush||1), off=b>>1, cx=i%S.w, cy=Math.floor(i/S.w); for(let dy=0;dy<b;dy++)for(let dx=0;dx<b;dx++){ const x=cx-off+dx, y=cy-off+dy; if(x<0||y<0||x>=S.w||y>=S.h)continue; this.setPx(y*S.w+x,col); } },
   cycleSym(){ const seq=['none','h','v','hv'], lbl={none:'nenhuma',h:'horizontal',v:'vertical',hv:'4 lados'}; S.sym=seq[(seq.indexOf(S.sym)+1)%4]; const b=document.getElementById('symBtn'); b.textContent='Simetria: '+lbl[S.sym]; b.classList.toggle('on',S.sym!=='none'); },
   apply(cl,e){ if(cl<0) return; const f=frame();
-    if(S.tool==='pencil') this.setPx(cl,S.color);
-    else if(S.tool==='eraser') this.setPx(cl,'');
+    if(S.tool==='pencil') this.stamp(cl,S.color);
+    else if(S.tool==='eraser') this.stamp(cl,'');
     else if(S.tool==='bucket') this.fill(cl);
     else if(S.tool==='picker'){ if(f[cl]) Palette.setColor(f[cl]); }
     this.render(); },
   lineTo(cl){ // continuous pencil/eraser between last and cl
     if(S.tool==='bucket'||S.tool==='picker'){ this.apply(cl); this.last=cl; return; }
     const pts=this.bres(this.last%S.w, Math.floor(this.last/S.w), cl%S.w, Math.floor(cl/S.w)); const f=frame();
-    pts.forEach(p=>{ const i=p[1]*S.w+p[0]; this.setPx(i, S.tool==='eraser'?'':S.color); }); this.last=cl; this.render(); },
+    pts.forEach(p=>{ const i=p[1]*S.w+p[0]; this.stamp(i, S.tool==='eraser'?'':S.color); }); this.last=cl; this.render(); },
   bres(x0,y0,x1,y1){ const pts=[]; let dx=Math.abs(x1-x0),dy=Math.abs(y1-y0),sx=x0<x1?1:-1,sy=y0<y1?1:-1,err=dx-dy;
     while(true){ pts.push([x0,y0]); if(x0===x1&&y0===y1)break; const e2=2*err; if(e2>-dy){err-=dy;x0+=sx;} if(e2<dx){err+=dx;y0+=sy;} } return pts; },
   shape(a,b,kind){ const out=new Array(S.w*S.h).fill(''); const ax=a%S.w,ay=Math.floor(a/S.w),bx=b%S.w,by=Math.floor(b/S.w);
@@ -579,6 +581,12 @@ function boot(){
 }
 let _rz; window.addEventListener('resize',()=>{ clearTimeout(_rz); _rz=setTimeout(()=>{ PX.autoZoom(); PX.fit(); },150); });
 window.addEventListener('load', boot);
+
+/* ===== Ponte para o Game Studio (quando embutido) ===== */
+(function(){ function snd(){ try{ parent.postMessage({type:'amz_project',data:serialize()},'*'); }catch(e){} }
+  window.addEventListener('message',function(e){ if(e.data&&e.data.type==='amz_getProject') snd(); });
+  if(window.parent!==window){ try{ const h=document.querySelector('header'); if(h){ const b=document.createElement('button'); b.textContent='✅ Usar no jogo'; b.className='primary'; b.style.marginLeft='6px'; b.onclick=snd; h.appendChild(b); } }catch(e){} }
+})();
 </script>
 </body>
 </html>
